@@ -6,11 +6,65 @@ permissions, workspace boundaries and API contracts.
 
 ## Install
 
-Download the archive for your operating system and architecture from
-[GitHub Releases](https://github.com/mathias8dev/engage-ctl/releases), and verify
-its SHA-256 against the release's `SHA256SUMS` file. Archives contain a single
-`engagectl` binary (`engagectl.exe` on Windows), the build provenance and licenses.
-No Node.js, npm, pnpm or source checkout is required to run it.
+Install the [latest stable release](https://github.com/mathias8dev/engage-ctl/releases/latest)
+on Linux or macOS directly from the installer hosted in this repository:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mathias8dev/engage-ctl/main/install.sh | sh
+engagectl --version
+```
+
+The installer defaults to `latest`, resolves GitHub's latest published stable
+release, detects your OS and architecture, verifies the archive's SHA-256 and
+installs into `~/.local/bin`. Add that directory to PATH if needed. No Node.js,
+npm, pnpm or source checkout is required. Run the same command again to upgrade.
+
+To select a specific version:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mathias8dev/engage-ctl/main/install.sh | sh -s -- 0.1.0
+```
+
+Set `ENGAGECTL_BIN_DIR` on the `sh` process to choose another directory:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mathias8dev/engage-ctl/main/install.sh | ENGAGECTL_BIN_DIR="$HOME/bin" sh
+```
+
+The installer replaces an existing binary only after the archive's checksum has
+been verified. The raw `main` URL always serves the current installer; the
+optional version argument selects the released binary to install.
+
+On Windows, run the PowerShell installer directly:
+
+```powershell
+& ([scriptblock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/mathias8dev/engage-ctl/main/install.ps1)))
+```
+
+It also defaults to the latest stable release. Append `-Version 0.1.0` to select
+a specific version. It installs into `%LOCALAPPDATA%\Programs\engage-ctl` and
+adds that directory to the current user's PATH. Open a new terminal afterward.
+Stop running CLI/MCP processes before replacing the Windows executable.
+
+With [mise](https://mise.jdx.dev/dev-tools/backends/github.html), install the
+latest release globally:
+
+```sh
+mise use -g github:mathias8dev/engage-ctl@latest
+mise exec -- engagectl --version
+```
+
+Or pin a version per project with
+`mise use github:mathias8dev/engage-ctl@0.1.0`.
+
+All installation methods require a published GitHub Release; CI build artifacts
+alone are not installable through these release URLs.
+
+For manual installation, download the archive for your OS and architecture from
+[GitHub Releases](https://github.com/mathias8dev/engage-ctl/releases/latest), and
+verify its SHA-256 against the release's `SHA256SUMS` file. Archives contain a
+single `engagectl` binary (`engagectl.exe` on Windows), build provenance and licenses.
+You can also download an installer to inspect it before running it.
 
 | System | Architectures | Archive |
 | --- | --- | --- |
@@ -21,28 +75,6 @@ No Node.js, npm, pnpm or source checkout is required to run it.
 Alpine/musl Linux is not supported by these builds. macOS executables are ad-hoc
 signed, not Apple-notarized; Windows executables do not carry an Authenticode
 signature. OS reputation checks may require approval for a downloaded executable.
-
-For Linux/macOS, the release also provides an installer which verifies the
-selected archive before installing into `~/.local/bin`:
-
-```sh
-# Download install.sh from the chosen release, inspect it, then:
-sh install.sh 0.1.0
-engagectl --version
-```
-
-Set `ENGAGECTL_BIN_DIR` to select a different directory. The installer replaces
-an existing binary only after the archive's checksum has been verified.
-
-On Windows, download `install.ps1` from the release and run:
-
-```powershell
-.\install.ps1 -Version 0.1.0
-```
-
-It installs into `%LOCALAPPDATA%\Programs\engage-ctl` and adds that directory to
-the current user's PATH. Open a new terminal afterward. Stop running CLI/MCP
-processes before replacing the Windows executable.
 
 ## Sign in
 
@@ -194,15 +226,24 @@ system CA trust and refusal of untrusted certificates.
 ## Releases
 
 GitHub Actions builds and tests all six OS/architecture combinations on matching
-hosted runners for pushes to `main` and pull requests. It uploads short-lived
-build artifacts without publishing a release.
+hosted runners for pushes to `main`, pull requests and version tags. Branch/PR
+builds upload short-lived artifacts without publishing a release.
 
-To publish, update `package.json`'s version, merge into `main`, then manually run
-the workflow **Build and release engagectl** with **publish** enabled. Every
-native build and packaged test must pass. The final job verifies archive hashes,
-version, target and exact source revision, creates a draft `vX.Y.Z` release,
-uploads the archives/installers/`SHA256SUMS`, then publishes it. It does not deploy
-Engage or publish anything to npm. No additional release token is required.
+To publish, update `package.json`'s version, merge into `main`, then push the
+matching stable `vX.Y.Z` tag:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The tag must exactly match the package version; invalid or mismatched tags fail
+before native builds start. Every native build and packaged test must pass.
+The final job verifies archive hashes, version, target and exact source revision,
+creates a draft release, uploads the archives/installers/`SHA256SUMS`, then
+publishes it as the latest release. Manual workflow runs validate builds only.
+It does not deploy Engage or publish anything to npm. No additional release
+token is required.
 
 Existing tags cannot be retargeted and published assets cannot be overwritten.
 Retry the failed publish job with the same artifacts after a partial draft upload;

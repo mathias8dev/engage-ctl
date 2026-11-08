@@ -8,13 +8,21 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { TARGETS } from "./targets.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const STABLE_VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+export function assertReleaseContext(environment, version) {
+  if (!STABLE_VERSION.test(version) || environment.GITHUB_REPOSITORY !== "mathias8dev/engage-ctl" ||
+      environment.GITHUB_EVENT_NAME !== "push" || environment.GITHUB_REF !== `refs/tags/v${version}` ||
+      !/^[a-f0-9]{40}$/.test(environment.GITHUB_SHA ?? "")) {
+    throw new Error("Publication requires a pushed vX.Y.Z tag matching package.json in engage-ctl and an exact source revision");
+  }
+}
 export async function sha256(path) {
   const hash = createHash("sha256");
   for await (const bytes of createReadStream(path)) hash.update(bytes);
   return hash.digest("hex");
 }
 export async function collectArtifacts(directory, version, revision) {
-  if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(version) || !/^[a-f0-9]{40}$/.test(revision)) throw new Error("A stable SemVer and exact source revision are required");
+  if (!STABLE_VERSION.test(version) || !/^[a-f0-9]{40}$/.test(revision)) throw new Error("A stable SemVer and exact source revision are required");
   const files = [];
   for (const { target } of TARGETS) {
     const manifest = JSON.parse(await readFile(join(directory, `manifest-${target}.json`), "utf8"));
@@ -37,10 +45,10 @@ function gh(args, allowMissing = false) {
   return result.stdout;
 }
 
-export async function publish() {
-  if (process.env.GITHUB_EVENT_NAME !== "workflow_dispatch" || process.env.GITHUB_REF !== "refs/heads/main" || process.env.GITHUB_REPOSITORY !== "mathias8dev/engage-ctl") throw new Error("Publication requires an explicit workflow dispatch from engage-ctl main");
-  const revision = process.env.GITHUB_SHA;
+export async function publish(environment = process.env) {
+  const revision = environment.GITHUB_SHA;
   const { version } = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  assertReleaseContext(environment, version);
   const directory = join(root, "dist/releases");
   const files = await collectArtifacts(directory, version, revision);
   for (const name of ["install.sh", "install.ps1"]) {
@@ -49,7 +57,7 @@ export async function publish() {
   const sums = (await Promise.all(files.sort().map(async name => `${await sha256(join(directory, name))}  ${name}`))).join("\n") + "\n";
   await writeFile(join(directory, "SHA256SUMS"), sums); files.push("SHA256SUMS");
   const tag = `v${version}`;
-  const repository = process.env.GITHUB_REPOSITORY;
+  const repository = environment.GITHUB_REPOSITORY;
   let reference = gh(["api", `repos/${repository}/git/ref/tags/${tag}`], true);
   if (reference) {
     let object = JSON.parse(reference).object;
@@ -82,6 +90,14 @@ export async function publish() {
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  if (process.argv[2] !== "--publish") throw new Error("Use --publish only from the release workflow");
-  await publish();
+  switch (process.argv[2]) {
+    case "--check-tag": {
+      const { version } = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+      assertReleaseContext(process.env, version);
+      console.log(`Release tag v${version} matches package.json`);
+      break;
+    }
+    case "--publish": await publish(); break;
+    default: throw new Error("Use --check-tag or --publish only from the release workflow");
+  }
 }

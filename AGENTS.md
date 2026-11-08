@@ -7,6 +7,6 @@ Use the mathias-engineering skill. This public repository contains the Engage op
 - Sessions must be private and pinned to API origin, user and workspace. Never log session tokens or forward cookies across redirects. Keep TLS verification enabled and preserve system/extra CA trust.
 - Model closed domain/API vocabularies with enums. Keep application behavior independent of packaging.
 - Ship standalone executables built with the pinned Node runtime. `engagectl mcp` must work without a checkout, Node installation or node_modules. Do not publish to npm.
-- Version comes from package.json. GitHub Actions builds and tests Linux/macOS/Windows artifacts on matching hosts and architectures. Publication is manual from main, after every artifact passed; immutable releases must never be overwritten.
+- Version comes from package.json. GitHub Actions builds and tests Linux/macOS/Windows artifacts on matching hosts and architectures. Publication is automatic only for pushed stable vX.Y.Z tags matching package.json, after every artifact passed; immutable releases must never be overwritten.
 - Run `pnpm check`, `pnpm package`, and the tests against the packaged executable before delivery. Review the entire diff and public file inventory for secrets and unrelated content.
 - Do not commit, push, publish a release or change external settings without explicit authorization. Use Conventional Commits with a meaningful body for nontrivial changes.
