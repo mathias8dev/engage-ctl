@@ -1,0 +1,67 @@
+name: Build and release engagectl
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish this main revision as an immutable GitHub Release
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: engage-ctl-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  matrix:
+    runs-on: ubuntu-24.04
+    outputs:
+      targets: ${{ steps.targets.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: targets
+        run: node -e "import('./scripts/targets.mjs').then(m => console.log('matrix='+JSON.stringify({include:m.TARGETS})))" >> "$GITHUB_OUTPUT"
+  build:
+    needs: matrix
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.targets) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - run: npm install --global pnpm@10.34.5
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm package
+      - run: pnpm test:packaged
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: engagectl-${{ matrix.target }}
+          path: dist/releases/*
+          if-no-files-found: error
+          retention-days: 14
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: engagectl-*
+          merge-multiple: true
+          path: dist/releases
+      - run: node scripts/release.mjs --publish
+        env:
+          GH_TOKEN: ${{ github.token }}

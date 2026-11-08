@@ -1,0 +1,36 @@
+{
+  "name": "engage-ctl",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "engagectl": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=24.5.0"
+  },
+  "packageManager": "pnpm@10.34.5",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm run build && node --test tests/*.test.mjs scripts/tests/*.test.mjs",
+    "check": "pnpm run test",
+    "package": "pnpm run build && node scripts/package.mjs",
+    "test:packaged": "node scripts/test-packaged.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "@types/node": "24.10.1",
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6",
+    "typescript": "5.9.3"
+  },
+  "description": "Standalone Engage command-line client and MCP server",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mathias8dev/engage-ctl.git"
+  }
+}
