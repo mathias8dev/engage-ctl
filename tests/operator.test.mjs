@@ -37,7 +37,7 @@ const spec = {
   }, components: { schemas: { CreateProject: { type: "object", required: ["name"], properties: { name: { type: "string" }, status: { $ref: "#/components/schemas/Status" } } }, Status: { type: "string", enum: ["ACTIVE", "ARCHIVED"] } } },
 };
 
-async function fixture(t) {
+async function fixture(t, { multipleWorkspaces = false } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "engagectl-test-"));
   await chmod(dir, 0o700);
   const path = join(dir, "session.json");
@@ -49,12 +49,17 @@ async function fixture(t) {
     calls.push({ method: request.method, url: request.url, headers: request.headers, body });
     response.setHeader("Content-Type", "application/json");
     if (request.url === "/api/backoffice/auth/native/config") {
-      response.end(JSON.stringify({ consoleUrl: origin, cookieName: "engage_session" })); return;
+      response.end(JSON.stringify({ issuer: origin, clientId: "engagectl", authorizationUri: `${origin}/oauth2/authorize`, cookieName: "engage_session" })); return;
     }
     if (request.url === "/api/backoffice/auth/native/exchange") {
       const exchange = JSON.parse(body);
       assert.equal(createHash("sha256").update(exchange.codeVerifier).digest("base64url"), expectedChallenge);
-      response.end(JSON.stringify({ token, workspaceId: "workspace-a", userId: "user-a", email: "user@example.com", expiresAt })); return;
+      assert.equal(exchange.nonce, expectedNonce);
+      if (multipleWorkspaces && !exchange.workspaceId) {
+        response.end(JSON.stringify({ status: "WORKSPACE_SELECTION_REQUIRED", ticket: "p".repeat(43),
+          workspaces: [{ id: "workspace-a", name: "Workspace A" }, { id: "workspace-b", name: "Workspace B" }] })); return;
+      }
+      response.end(JSON.stringify({ status: "AUTHENTICATED", token, workspaceId: exchange.workspaceId ?? "workspace-a", userId: "user-a", email: "user@example.com", expiresAt })); return;
     }
     if (request.headers.cookie !== `engage_session=${token}`) { response.statusCode = 401; response.end('{"code":"authentication_required"}'); return; }
     if (request.url === "/api/backoffice/openapi") { response.end(JSON.stringify(spec)); return; }
@@ -72,11 +77,12 @@ async function fixture(t) {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
   let expectedChallenge;
+  let expectedNonce;
   const session = { apiUrl: origin, token, cookieName: "engage_session", workspaceId: "workspace-a", userId: "user-a", email: "user@example.com", expiresAt };
   await saveSession(session, path);
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true }); });
   const env = { ...process.env, ENGAGECTL_SESSION_FILE: path, ENGAGECTL_API_URL: origin };
-  return { dir, path, calls, origin, session, env, client: new EngageClient(path), challenge: value => { expectedChallenge = value; } };
+  return { dir, path, calls, origin, session, env, client: new EngageClient(path), challenge: (value, nonce) => { expectedChallenge = value; expectedNonce = nonce; } };
 }
 
 test("discovers all operation families, resolves enum schemas, validates paths and sends exact scoped requests", async t => {
@@ -159,23 +165,62 @@ test("browser PKCE login validates callback state and stores only a private sess
     let stderr = "";
     child.stderr.on("data", chunk => {
       stderr += chunk;
-      const url = stderr.match(/http:\/\/127\.0\.0\.1:\d+\/api\/engage\/backoffice\/auth\/native\/authorize\?[^\s]+/);
+      const url = stderr.match(/http:\/\/127\.0\.0\.1:\d+\/oauth2\/authorize\?[^\s]+/);
       if (url) resolve(new URL(url[0]));
     });
     child.on("exit", code => reject(new Error(`Login exited before authorization: ${code}: ${stderr}`)));
   });
-  f.challenge(authorization.searchParams.get("codeChallenge"));
-  const callback = new URL(authorization.searchParams.get("redirectUri"));
+  assert.equal(authorization.searchParams.get("client_id"), "engagectl");
+  assert.equal(authorization.searchParams.get("code_challenge_method"), "S256");
+  assert.equal(authorization.searchParams.get("max_age"), "0");
+  f.challenge(authorization.searchParams.get("code_challenge"), authorization.searchParams.get("nonce"));
+  const callback = new URL(authorization.searchParams.get("redirect_uri"));
   callback.search = new URLSearchParams({ state: "wrong", code: "c".repeat(43) });
   assert.equal((await fetch(callback)).status, 400);
   callback.search = new URLSearchParams({ state: "é".repeat(43), code: "c".repeat(43) });
   assert.equal((await fetch(callback)).status, 400);
-  callback.search = new URLSearchParams({ state: authorization.searchParams.get("state"), code: "c".repeat(43) });
+  callback.search = new URLSearchParams({ state: authorization.searchParams.get("state"), code: "c".repeat(43), iss: "https://wrong-issuer.example" });
+  assert.equal((await fetch(callback)).status, 400);
+  callback.search = new URLSearchParams({ state: authorization.searchParams.get("state"), code: "c".repeat(43), iss: f.origin });
   assert.equal((await fetch(callback)).status, 200);
   assert.equal(await new Promise(resolve => child.on("exit", resolve)), 0);
   assert.equal((await loadSession(f.path)).workspaceId, "workspace-a");
   assert.equal(stdout.includes(token), false);
   assert.equal(JSON.parse(stdout).email, "user@example.com");
+});
+
+test("noninteractive native login requires an explicit workspace and never stores a pending ticket", async t => {
+  for (const workspaceId of [undefined, "workspace-b"]) {
+    const f = await fixture(t, { multipleWorkspaces: true });
+    await rm(f.path);
+    const child = spawn(cliCommand, [...cliPrefix, "login", "--api-url", f.origin, "--no-browser",
+      ...(workspaceId ? ["--workspace", workspaceId] : [])], { env: f.env, stdio: ["ignore", "pipe", "pipe"] });
+    t.after(() => child.kill());
+    const exited = new Promise(resolve => child.on("exit", resolve));
+    let stderr = "";
+    let stdout = "";
+    child.stdout.on("data", chunk => { stdout += chunk; });
+    const authorization = await new Promise((resolve, reject) => {
+      child.stderr.on("data", chunk => {
+        stderr += chunk;
+        const match = stderr.match(/http:\/\/127\.0\.0\.1:\d+\/oauth2\/authorize\?[^\s]+/);
+        if (match) resolve(new URL(match[0]));
+      });
+      child.on("exit", code => reject(new Error(`Login exited early: ${code}: ${stderr}`)));
+    });
+    f.challenge(authorization.searchParams.get("code_challenge"), authorization.searchParams.get("nonce"));
+    const callback = new URL(authorization.searchParams.get("redirect_uri"));
+    callback.search = new URLSearchParams({ state: authorization.searchParams.get("state"), iss: f.origin, code: "c".repeat(43) });
+    assert.equal((await fetch(callback)).status, 200);
+    assert.equal(await exited, workspaceId ? 0 : 1);
+    if (workspaceId) {
+      assert.equal((await loadSession(f.path)).workspaceId, workspaceId);
+      assert.equal(JSON.parse(stdout).clientId, "engagectl");
+    } else {
+      assert.match(stderr, /Select a workspace with login --workspace ID/);
+      await assert.rejects(readFile(f.path), /ENOENT/);
+    }
+  }
 });
 
 test("official MCP client discovers and invokes stdio tools with explicit permission errors", async t => {

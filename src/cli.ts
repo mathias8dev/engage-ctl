@@ -30,7 +30,7 @@ async function readInput(path: string): Promise<string> {
 
 enum Command { LOGIN = "login", STATUS = "status", LOGOUT = "logout", OPERATIONS = "operations", SCHEMA = "schema", EXECUTE = "execute", MCP = "mcp", HELP = "help" }
 const help = `Usage:
-  engagectl login --api-url https://api.engage.example [--no-browser]
+  engagectl login --api-url https://api.engage.example [--no-browser] [--workspace ID]
   engagectl status
   engagectl logout
   engagectl operations [keywords] [--offset 0] [--limit 25]
@@ -50,7 +50,7 @@ All commands emit JSON to stdout; diagnostics and browser login URLs go to stder
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
-    options: { "api-url": { type: "string" }, "no-browser": { type: "boolean" }, input: { type: "string" },
+    options: { "api-url": { type: "string" }, workspace: { type: "string" }, "no-browser": { type: "boolean" }, input: { type: "string" },
       "dry-run": { type: "boolean" }, output: { type: "string" }, "body-file": { type: "string" },
       "content-type": { type: "string" }, offset: { type: "string" }, limit: { type: "string" }, help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" } },
   });
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   if (!Object.values(Command).includes(command as Command)) throw new Error(`Unknown command ${command}; use engagectl --help`);
   if (![Command.OPERATIONS, Command.SCHEMA, Command.EXECUTE].includes(command as Command) && args.length) throw new Error("Unexpected positional arguments");
   const allowedOptions: Record<Command, string[]> = {
-    [Command.LOGIN]: ["api-url", "no-browser"], [Command.STATUS]: [], [Command.LOGOUT]: [],
+    [Command.LOGIN]: ["api-url", "no-browser", "workspace"], [Command.STATUS]: [], [Command.LOGOUT]: [],
     [Command.OPERATIONS]: ["offset", "limit"], [Command.SCHEMA]: [],
     [Command.EXECUTE]: ["input", "dry-run", "output", "body-file", "content-type"], [Command.MCP]: [], [Command.HELP]: [],
   };
@@ -73,7 +73,7 @@ async function main(): Promise<void> {
     case Command.LOGIN: {
       const origin = values["api-url"] ?? process.env.ENGAGECTL_API_URL;
       if (!origin) throw new Error("Specify --api-url or ENGAGECTL_API_URL");
-      print(await login(origin, values["no-browser"])); return;
+      print(await login(origin, values["no-browser"], undefined, values.workspace)); return;
     }
     case Command.MCP: {
       const { startMcp } = await import("./mcp.js"); startMcp(); return;

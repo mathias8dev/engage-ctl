@@ -22,7 +22,7 @@ npm, pnpm or source checkout is required. Run the same command again to upgrade.
 To select a specific version:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mathias8dev/engage-ctl/main/install.sh | sh -s -- 0.1.0
+curl -fsSL https://raw.githubusercontent.com/mathias8dev/engage-ctl/main/install.sh | sh -s -- 0.1.1
 ```
 
 Set `ENGAGECTL_BIN_DIR` on the `sh` process to choose another directory:
@@ -41,7 +41,7 @@ On Windows, run the PowerShell installer directly:
 & ([scriptblock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/mathias8dev/engage-ctl/main/install.ps1)))
 ```
 
-It also defaults to the latest stable release. Append `-Version 0.1.0` to select
+It also defaults to the latest stable release. Append `-Version 0.1.1` to select
 a specific version. It installs into `%LOCALAPPDATA%\Programs\engage-ctl` and
 adds that directory to the current user's PATH. Open a new terminal afterward.
 Stop running CLI/MCP processes before replacing the Windows executable.
@@ -55,7 +55,9 @@ mise exec -- engagectl --version
 ```
 
 Or pin a version per project with
-`mise use github:mathias8dev/engage-ctl@0.1.0`.
+`mise use github:mathias8dev/engage-ctl@0.1.1`. Recent mise versions delay `latest`
+by 24 hours by default. Pin the new version explicitly to install it immediately,
+for example `mise use -g github:mathias8dev/engage-ctl@0.1.1`.
 
 All installation methods require a published GitHub Release; CI build artifacts
 alone are not installable through these release URLs.
@@ -84,15 +86,33 @@ engagectl status
 ```
 
 The selected Engage backend and its configured Identity provider must be running
-and support the native authorization API. Authentication uses the existing
-Engage browser flow, including Identity or organization SSO, MFA and workspace
-selection. The browser asks for explicit approval, then returns a single-use
-code to a random `127.0.0.1` port. The CLI validates state and exchanges the code
-with an S256 PKCE proof.
+and support the dedicated-client native authorization API used by 0.1.1+.
+Identity must have the dedicated
+public `engagectl` client registered as `NATIVE`, with token endpoint
+authentication `NONE`, explicit consent, scopes `openid email`, and loopback
+redirect `http://127.0.0.1/oauth2/callback`. Identity permits the random callback
+port. This client is separate from the confidential `engage-console` client and
+never uses its secret or console browser session.
 
-The CLI receives its own revocable Engage session. It never receives a password,
-Identity refresh token or administrator access key. Session freshness and the
-absolute deadline cannot be extended beyond the authorizing browser proof.
+Login opens Identity directly with `client_id=engagectl`, fresh authentication,
+state, nonce and S256 PKCE. After login/MFA and consent, Identity returns a
+single-use code to a random `127.0.0.1` port. The CLI checks the callback's state
+and exact issuer. The backend exchanges that code as the public native client,
+validates the signed ID token's issuer, audience, expiry, nonce and authentication
+time, then resolves the existing Engage account by exact issuer and subject.
+Email matching never links accounts or creates permissions.
+
+When several active workspaces are available, interactive login asks which one
+to use. Specify one explicitly for scripts:
+
+```sh
+engagectl login --api-url https://api.engage.lookandtry.local --workspace WORKSPACE_ID
+```
+
+The CLI stores its own revocable Engage session. It never receives a password,
+Identity refresh token or administrator access key. Session freshness and its
+absolute lifetime are measured from Identity's verified authentication time,
+including after workspace selection.
 Live permissions, membership, workspace status, MFA and IP policy stay enforced
 by Engage. Revoke the session from the console's session settings or run:
 
@@ -233,8 +253,8 @@ To publish, update `package.json`'s version, merge into `main`, then push the
 matching stable `vX.Y.Z` tag:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
 The tag must exactly match the package version; invalid or mismatched tags fail
