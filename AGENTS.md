@@ -10,3 +10,24 @@ Use the mathias-engineering skill. This public repository contains the Engage op
 - Version comes from package.json. GitHub Actions builds and tests Linux/macOS/Windows artifacts on matching hosts and architectures. Publication is automatic only for pushed stable vX.Y.Z tags matching package.json, after every artifact passed; immutable releases must never be overwritten.
 - Run `pnpm check`, `pnpm package`, and the tests against the packaged executable before delivery. Review the entire diff and public file inventory for secrets and unrelated content.
 - Do not commit, push, publish a release or change external settings without explicit authorization. Use Conventional Commits with a meaningful body for nontrivial changes.
+
+<!-- mathias-release-flow:start -->
+## Shared release conventions
+
+- `develop` is the integration branch; `master` is the production/stable branch.
+- Use Conventional Commits. Prepare `release/X.Y.Z` from the chosen develop HEAD
+  or a specific commit in develop history. Include existing production fixes.
+- The native version file(s) in `.release.json` are authoritative. Review the
+  proposed SemVer version and `CHANGELOG.md` in the release MR. Breaking changes
+  propose major, features minor, other changes patch; `--bump` is a human override.
+- Merge the same approved release branch into master and develop with `--no-ff`.
+  Retain it until both merges and successful delivery, then remove it.
+- Delivery uses the exact approved version; never recalculate it after review.
+  Application tags follow successful production readiness. Package tags authorize
+  the existing publication pipeline only after its release checks; immutable
+  published versions/tags must never be moved or replaced to retry a failure.
+- Release preparation never commits, pushes, tags, publishes or deploys. These
+  actions require the corresponding explicit user authorization. Keep CI launch,
+  costly stages and production approval explicit.
+- See `RELEASING.md` for the repository-owned command and verification steps.
+<!-- mathias-release-flow:end -->
