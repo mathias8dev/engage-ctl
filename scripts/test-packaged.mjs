@@ -9,7 +9,7 @@ try {
   const executable = join(directory, process.platform === "win32" ? "engage ctl.exe" : "engage ctl");
   await copyFile(source, executable);
   execFileSync(executable, ["--version"], { cwd: directory, stdio: "inherit" });
-  execFileSync(process.execPath, ["--test", "tests/operator.test.mjs", "tests/tls.test.mjs"], {
+  execFileSync(process.execPath, ["--test", "tests/operator.test.mjs", "tests/oauth.test.mjs", "tests/tls.test.mjs"], {
     cwd: root, env: { ...process.env, ENGAGECTL_TEST_EXECUTABLE: executable }, stdio: "inherit",
   });
 } finally { await rm(directory, { recursive: true, force: true }); }

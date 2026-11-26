@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, chmod, lstat, readFile, rm, symlink } from "node:fs/promises";
+import { mkdtemp, chmod, lstat, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { cliCommand, cliPrefix } from "./cli-helper.mjs";
@@ -16,7 +16,8 @@ import { OperationCatalog, execute } from "../dist/operations.js";
 
 const run = promisify(execFile);
 
-const token = "t".repeat(43);
+const token = "access.fixture.token";
+const refreshToken = "r".repeat(43);
 const spec = {
   openapi: "3.1.0", paths: {
     "/api/backoffice/projects": {
@@ -49,19 +50,28 @@ async function fixture(t, { multipleWorkspaces = false } = {}) {
     calls.push({ method: request.method, url: request.url, headers: request.headers, body });
     response.setHeader("Content-Type", "application/json");
     if (request.url === "/api/backoffice/auth/native/config") {
-      response.end(JSON.stringify({ issuer: origin, clientId: "engagectl", authorizationUri: `${origin}/oauth2/authorize`, cookieName: "engage_session" })); return;
+      response.end(JSON.stringify({ issuer: origin, clientId: "engagectl", resource: `${origin}/engage/console` })); return;
     }
-    if (request.url === "/api/backoffice/auth/native/exchange") {
-      const exchange = JSON.parse(body);
-      assert.equal(createHash("sha256").update(exchange.codeVerifier).digest("base64url"), expectedChallenge);
-      assert.equal(exchange.nonce, expectedNonce);
-      if (multipleWorkspaces && !exchange.workspaceId) {
-        response.end(JSON.stringify({ status: "WORKSPACE_SELECTION_REQUIRED", ticket: "p".repeat(43),
-          workspaces: [{ id: "workspace-a", name: "Workspace A" }, { id: "workspace-b", name: "Workspace B" }] })); return;
-      }
-      response.end(JSON.stringify({ status: "AUTHENTICATED", token, workspaceId: exchange.workspaceId ?? "workspace-a", userId: "user-a", email: "user@example.com", expiresAt })); return;
+    if (request.url === "/oauth2/token") {
+      const form = new URLSearchParams(body.toString());
+      assert.equal(createHash("sha256").update(form.get("code_verifier")).digest("base64url"), expectedChallenge);
+      assert.equal(form.get("grant_type"), "authorization_code");
+      assert.equal(form.get("client_id"), "engagectl");
+      assert.equal(form.get("client_secret"), null);
+      response.end(JSON.stringify({ access_token: token, refresh_token: refreshToken, token_type: "Bearer", expires_in: 3600,
+        scope: "openid email offline_access engage.console" })); return;
     }
-    if (request.headers.cookie !== `engage_session=${token}`) { response.statusCode = 401; response.end('{"code":"authentication_required"}'); return; }
+    if (request.url === "/oauth2/revoke") {
+      assert.equal(new URLSearchParams(body.toString()).get("token"), refreshToken);
+      response.statusCode = 200; response.end(); return;
+    }
+    if (request.headers.authorization !== `Bearer ${token}`) { response.statusCode = 401; response.end('{"code":"authentication_required"}'); return; }
+    assert.equal(request.headers.cookie, undefined);
+    if (request.url === "/api/backoffice/auth/native/workspaces") {
+      response.end(JSON.stringify({ userId: "user-a", email: "user@example.com", workspaces: [{ id: "workspace-a", name: "Workspace A" },
+        ...(multipleWorkspaces ? [{ id: "workspace-b", name: "Workspace B" }] : [])] })); return;
+    }
+    assert.equal(request.headers["x-engage-workspace"], "workspace-a");
     if (request.url === "/api/backoffice/openapi") { response.end(JSON.stringify(spec)); return; }
     if (request.url === "/api/backoffice/auth/me") { response.end('{"id":"user-a","email":"user@example.com"}'); return; }
     if (request.url === "/api/backoffice/auth/logout") {
@@ -78,7 +88,7 @@ async function fixture(t, { multipleWorkspaces = false } = {}) {
   const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
   let expectedChallenge;
   let expectedNonce;
-  const session = { apiUrl: origin, token, cookieName: "engage_session", workspaceId: "workspace-a", userId: "user-a", email: "user@example.com", expiresAt };
+  const session = { schemaVersion: 2, issuer: origin, apiUrl: origin, resource: `${origin}/engage/console`, clientId: "engagectl", accessToken: token, refreshToken, accessTokenExpiresAt: Math.floor(Date.now() / 1000) + 3600, scopes: "openid email offline_access engage.console", workspaceId: "workspace-a", userId: "user-a", email: "user@example.com" };
   await saveSession(session, path);
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(dir, { recursive: true, force: true }); });
   const env = { ...process.env, ENGAGECTL_SESSION_FILE: path, ENGAGECTL_API_URL: origin };
@@ -129,14 +139,14 @@ test("CLI dry-run performs no write, downloads bytes, preserves API failures and
   await assert.rejects(run(cliCommand, [...cliPrefix, "execute", "download", "--output", output], { env: f.env }));
   await run(cliCommand, [...cliPrefix, "logout"], { env: f.env });
   await assert.rejects(readFile(f.path), /ENOENT/);
-  assert.equal(f.calls.at(-1).url, "/api/backoffice/auth/logout");
+  assert.equal(f.calls.at(-1).url, "/oauth2/revoke");
 });
 
 test("session storage is private, refuses symlinks and rejects untrusted API origins", { skip: process.platform === "win32" }, async t => {
   const f = await fixture(t);
   assert.equal((await lstat(f.path)).mode & 0o777, 0o600);
-  await assert.rejects(saveSession({ ...f.session, token: "x".repeat(43) }, f.path), /EEXIST/);
-  assert.equal((await loadSession(f.path)).token, token);
+  await assert.rejects(saveSession({ ...f.session, accessToken: "x".repeat(43) }, f.path), /EEXIST/);
+  assert.equal((await loadSession(f.path)).accessToken, token);
   await chmod(f.path, 0o644);
   await assert.rejects(loadSession(f.path), /private/);
   await chmod(f.path, 0o600);
@@ -157,7 +167,7 @@ test("a running client refuses a changed account or workspace before sending a r
 test("browser PKCE login validates callback state and stores only a private session", async t => {
   const f = await fixture(t);
   await rm(f.path);
-  const child = spawn(cliCommand, [...cliPrefix, "login", "--api-url", f.origin, "--no-browser"], { env: f.env, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(cliCommand, [...cliPrefix, "login", "--api-url", f.origin, "--issuer", f.origin, "--no-browser"], { env: f.env, stdio: ["ignore", "pipe", "pipe"] });
   t.after(() => child.kill());
   let stdout = "";
   child.stdout.on("data", chunk => { stdout += chunk; });
@@ -173,6 +183,9 @@ test("browser PKCE login validates callback state and stores only a private sess
   assert.equal(authorization.searchParams.get("client_id"), "engagectl");
   assert.equal(authorization.searchParams.get("code_challenge_method"), "S256");
   assert.equal(authorization.searchParams.get("max_age"), "0");
+  assert.match(authorization.searchParams.get("nonce"), /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(authorization.searchParams.get("scope"), "openid email offline_access engage.console");
+  assert.equal(authorization.searchParams.get("resource"), `${f.origin}/engage/console`);
   f.challenge(authorization.searchParams.get("code_challenge"), authorization.searchParams.get("nonce"));
   const callback = new URL(authorization.searchParams.get("redirect_uri"));
   callback.search = new URLSearchParams({ state: "wrong", code: "c".repeat(43) });
@@ -189,7 +202,7 @@ test("browser PKCE login validates callback state and stores only a private sess
   assert.equal(JSON.parse(stdout).email, "user@example.com");
 });
 
-test("noninteractive native login requires an explicit workspace and never stores a pending ticket", async t => {
+test("noninteractive native login requires an explicit workspace and preserves the OAuth grant for revocation", async t => {
   for (const workspaceId of [undefined, "workspace-b"]) {
     const f = await fixture(t, { multipleWorkspaces: true });
     await rm(f.path);
@@ -218,6 +231,8 @@ test("noninteractive native login requires an explicit workspace and never store
       assert.equal(JSON.parse(stdout).clientId, "engagectl");
     } else {
       assert.match(stderr, /Select a workspace with login --workspace ID/);
+      assert.equal((await loadSession(f.path)).workspaceId, null);
+      await run(cliCommand, [...cliPrefix, "logout"], { env: f.env });
       await assert.rejects(readFile(f.path), /ENOENT/);
     }
   }

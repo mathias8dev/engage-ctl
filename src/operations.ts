@@ -27,7 +27,7 @@ export const executionSchema = z.object({
   rawBodyBase64: z.string().max(96 * 1024 * 1024).regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/).optional(),
 }).strict();
 export type Execution = z.infer<typeof executionSchema>;
-const credentialHeaders = new Set(["authorization", "cookie", "host", "x-engage-client", "set-cookie"]);
+const credentialHeaders = new Set(["authorization", "cookie", "host", "x-engage-client", "set-cookie", "x-engage-workspace"]);
 
 export class OperationCatalog {
   private constructor(readonly operations: Operation[], private readonly document: z.infer<typeof documentSchema>) {}

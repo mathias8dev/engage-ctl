@@ -21,7 +21,7 @@ export function createMcpServer(client = new EngageClient()): McpServer {
     inputSchema: z.object({}).strict(), annotations: { readOnlyHint: true },
   }, async () => guarded(async () => {
     const session = await client.session();
-    return { apiUrl: session.apiUrl, workspaceId: session.workspaceId, expiresAt: session.expiresAt, account: await client.json("/api/backoffice/auth/me") };
+    return { apiUrl: session.apiUrl, workspaceId: session.workspaceId, issuer: session.issuer, accessTokenExpiresAt: session.accessTokenExpiresAt, account: await client.json("/api/backoffice/auth/me") };
   }));
   server.registerTool("engage_search_operations", {
     description: "Discover current console operations by keywords in their names, routes and descriptions. Returns a bounded page; use offset to continue.",

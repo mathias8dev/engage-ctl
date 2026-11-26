@@ -1,4 +1,5 @@
 [tools]
+python = "3.12.12"
 node = "24.16.0"
 pnpm = "10.34.5"
 
@@ -14,3 +15,15 @@ run = "pnpm check"
 run = "pnpm package"
 [tasks."test:packaged"]
 run = "pnpm test:packaged"
+
+[tasks."release:prepare"]
+description = "Prepare the reviewed semantic release"
+run = "python3 -B scripts/release.py prepare"
+
+[tasks."release:check"]
+description = "Check the reviewed semantic release"
+run = "python3 -B scripts/release.py check"
+
+[tasks."release:inspect"]
+description = "Inspect the reviewed semantic release"
+run = "python3 -B scripts/release.py inspect"
