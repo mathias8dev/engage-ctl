@@ -103,8 +103,9 @@ endpoint authentication `NONE`, explicit consent, scopes
 `openid email offline_access engage.console`, loopback redirect
 `http://127.0.0.1/oauth2/callback`, and default resource
 `ISSUER/engage/console`. Identity permits a random callback port. The resource
-uses audience `engage-console-api` and scope `engage.console`; it has its own
-introspection credential held only by Engage. The client never uses the
+uses its own URI as audience and scope `engage.console`. Engage introspects with
+its existing confidential Identity client, explicitly granted this resource in
+Identity; it needs no separate native flag, audience setting or credential. The client never uses the
 `engage-console` secret, an integration key or a browser console cookie.
 
 Login uses Authorization Code/S256 PKCE, state, the exact callback issuer and
