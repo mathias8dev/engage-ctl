@@ -104,8 +104,9 @@ endpoint authentication `NONE`, explicit consent, scopes
 `http://127.0.0.1/oauth2/callback`, and default resource
 `ISSUER/engage/console`. Identity permits a random callback port. The resource
 uses its own URI as audience and scope `engage.console`. Engage introspects with
-its existing confidential Identity client, explicitly granted this resource in
-Identity; it needs no separate native flag, audience setting or credential. The client never uses the
+a dedicated protected-resource credential held only by its backend, as in
+LookAndTry. The backend sets `ENGAGE_IDENTITY_CREDENTIAL_ID` and
+`ENGAGE_IDENTITY_CREDENTIAL_SECRET`; no native flag or audience override is needed. The client never uses the
 `engage-console` secret, an integration key or a browser console cookie.
 
 Login uses Authorization Code/S256 PKCE, state, the exact callback issuer and
