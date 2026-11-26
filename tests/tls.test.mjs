@@ -69,8 +69,9 @@ test("authenticated transport errors preserve the cause without exposing cookies
   t.after(() => rm(dir, { recursive: true, force: true }));
   const path = join(dir, "session.json");
   const token = "t".repeat(43);
-  await saveSession({ apiUrl: "https://api.engage.example", cookieName: "engage_session", token,
-    workspaceId: "workspace", userId: "user", email: "user@example.com", expiresAt: new Date(Date.now() + 60_000).toISOString() }, path);
+  await saveSession({ schemaVersion: 2, issuer: "https://auth.engage.example", apiUrl: "https://api.engage.example", resource: "https://auth.engage.example/engage/console",
+    clientId: "engagectl", accessToken: token, refreshToken: "refresh-fixture-token", scopes: "offline_access engage.console",
+    workspaceId: "workspace", userId: "user", email: "user@example.com", accessTokenExpiresAt: Math.floor(Date.now() / 1000) + 3600 }, path);
   const client = new EngageClient(path, async () => {
     throw new TypeError("fetch failed", { cause: Object.assign(new Error("connection refused"), { code: "ECONNREFUSED" }) });
   });

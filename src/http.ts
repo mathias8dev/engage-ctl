@@ -1,7 +1,7 @@
 import { VERSION } from "./version.js";
-import { z } from "zod";
 import { getCACertificates, setDefaultCACertificates } from "node:tls";
-import { apiOrigin, loadSession, saveSession, type Session } from "./session.js";
+import { apiOrigin } from "./config.js";
+import { currentSession, type AuthenticatedSession } from "./session.js";
 
 // Include locally installed gateway/enterprise CAs while retaining bundled and extra CAs.
 // This runs before the CLI or MCP makes its first connection; TLS verification stays enabled.
@@ -84,44 +84,61 @@ export async function publicJson(origin: string, path: string, body?: unknown): 
   return jsonResponse(response);
 }
 
+enum OAuthErrorCode {
+  INVALID_REQUEST = "invalid_request", INVALID_CLIENT = "invalid_client", INVALID_GRANT = "invalid_grant",
+  INVALID_SCOPE = "invalid_scope", UNAUTHORIZED_CLIENT = "unauthorized_client", ACCESS_DENIED = "access_denied",
+  SERVER_ERROR = "server_error", TEMPORARILY_UNAVAILABLE = "temporarily_unavailable",
+}
+
+export async function oauthPost(issuer: string, path: string, values: Record<string, string>): Promise<unknown> {
+  const response = await fetchResponse(new URL(path, issuer), {
+    method: "POST", redirect: "error", signal: AbortSignal.timeout(30_000),
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json", "User-Agent": `engagectl/${VERSION}` },
+    body: new URLSearchParams(values),
+  });
+  const bytes = await readBounded(response, 64 * 1024);
+  if (!response.ok) {
+    let code: string | undefined;
+    try {
+      const value = JSON.parse(new TextDecoder().decode(bytes));
+      if (Object.values(OAuthErrorCode).includes(value?.error)) code = value.error;
+    } catch { /* Never include a credential-bearing OAuth error body. */ }
+    throw new ApiError(response.status, code ?? "Identity OAuth request rejected",
+      code === OAuthErrorCode.INVALID_GRANT ? "The refresh grant expired or was revoked; run engagectl logout then engagectl login." : undefined);
+  }
+  if (!bytes.length) return undefined;
+  try { return JSON.parse(new TextDecoder().decode(bytes)); }
+  catch { throw new Error("Identity returned invalid OAuth JSON"); }
+}
+
 export class EngageClient {
-  private binding?: { apiUrl: string; workspaceId: string; userId: string };
+  private binding?: string;
   constructor(private readonly sessionFile?: string, private readonly fetcher: typeof fetch = fetch) {}
 
-  async session(): Promise<Session> {
-    const session = await loadSession(this.sessionFile);
-    if (this.binding && (this.binding.apiUrl !== session.apiUrl || this.binding.workspaceId !== session.workspaceId || this.binding.userId !== session.userId)) {
-      throw new Error("Engage account, workspace or instance changed; restart this client and inspect engage_status before acting");
-    }
-    this.binding ??= { apiUrl: session.apiUrl, workspaceId: session.workspaceId, userId: session.userId };
-    return session;
+  async session(): Promise<AuthenticatedSession> {
+    return currentSession(this.sessionFile, session => {
+      const binding = JSON.stringify([session.apiUrl, session.issuer, session.clientId, session.resource, session.userId, session.workspaceId]);
+      if (this.binding && this.binding !== binding) {
+        throw new Error("Engage account, issuer, workspace or instance changed; restart this client and inspect engage_status before acting");
+      }
+      this.binding ??= binding;
+    });
   }
 
   async request(path: string, init: RequestInit = {}): Promise<Response> {
     const session = await this.session();
-    if (Date.parse(session.expiresAt) <= Date.now() && path !== "/api/backoffice/auth/logout") throw new Error("Engage session expired; run engagectl logout then engagectl login");
     const url = new URL(path, session.apiUrl);
     if (url.origin !== session.apiUrl || !url.pathname.startsWith("/api/")) throw new Error("Request must target this Engage API");
     const headers = new Headers(init.headers);
-    headers.set("Cookie", `${session.cookieName}=${session.token}`);
+    headers.delete("Cookie");
+    headers.set("Authorization", `Bearer ${session.accessToken}`);
+    headers.set("X-Engage-Workspace", session.workspaceId);
     headers.set("X-Engage-Client", "console");
     headers.set("User-Agent", `engagectl/${VERSION}`);
     headers.set("Accept", "application/json");
-    const response = await fetchResponse(url, {
+    return fetchResponse(url, {
       ...init, headers, redirect: "error", signal: init.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
     }, this.fetcher);
-    for (const cookie of response.headers.getSetCookie()) {
-      const [pair] = cookie.split(";");
-      if (pair?.startsWith(`${session.cookieName}=`)) {
-        const token = pair.slice(session.cookieName.length + 1);
-        if (!token) continue;
-        if (token !== session.token) {
-          z.string().regex(/^[A-Za-z0-9_-]{43}$/).parse(token);
-          await saveSession({ ...session, token }, this.sessionFile, true);
-        }
-      }
-    }
-    return response;
   }
 
   async json(path: string, init: RequestInit = {}): Promise<unknown> {
